@@ -1,0 +1,482 @@
+---
+output:
+  pdf_document: default
+  html_document: default
+---
+# R codes for coursework
+## prepare data before solving questions
+### set the working directory that contains the files
+getwd()
+setwd("C:/Users/a0972/Desktop/st2195/coursework")
+library(dplyr)
+library(DBI)
+### create the database
+if (file.exists("coursework1.db")) 
+  file.remove("courseworl1.db")
+conn <- dbConnect(RSQLite::SQLite(), "coursework1.db")
+
+### create tables(read from csv files)
+firsty <- read.csv("2007.csv", header = TRUE)
+secondy <- read.csv("2008.csv", header = TRUE)
+plane <- read.csv("plane-data.csv", header = TRUE)
+airport_code<- read.csv("airports.csv", header = TRUE)
+
+dbWriteTable(conn, "firsty", firsty,overwrite = FALSE)
+dbWriteTable(conn, "secondy", secondy,overwrite = FALSE)
+dbWriteTable(conn, "plane", plane,overwrite = FALSE)
+dbWriteTable(conn, "airport_code", airport_code, overwrite = FALSE)
+
+df12<-rbind(firsty,secondy)
+
+## question one
+## delays in years
+```{r}
+### remove negative delay
+firsty[firsty<0]<-NA
+secondy[secondy<0]<-NA
+
+### calculate monthly delay for ArrDelay and DepDelay
+ArrDelay_1m<-aggregate(firsty$ArrDelay,list(firsty$Month),mean,na.rm=TRUE)
+DepDelay_1m<-aggregate(firsty$DepDelay,list(firsty$Month),mean,na.rm=TRUE)
+ArrDelay_2m<-aggregate(secondy$ArrDelay,list(secondy$Month),mean,na.rm=TRUE)
+DepDelay_2m<-aggregate(secondy$DepDelay,list(secondy$Month),mean,na.rm=TRUE)
+
+### rename column
+ArrDelay_1m<-ArrDelay_1m%>%rename(Month = Group.1,ArrDelay = x)
+DepDelay_1m<-DepDelay_1m%>%rename(Month = Group.1,DepDelay = x)
+ArrDelay_2m<-ArrDelay_2m%>%rename(Month = Group.1,ArrDelay = x)
+DepDelay_2m<-DepDelay_2m%>%rename(Month = Group.1,DepDelay = x)
+
+### combine ArrDelay and DepDelay
+total_delay1m=ArrDelay_1m%>%full_join(DepDelay_1m,by="Month")
+total_delay2m=ArrDelay_2m%>%full_join(DepDelay_2m,by="Month")
+
+### add year column in total_delay
+Year<- 2007
+total_delay1m<- cbind(total_delay1m,Year)
+Year<- 2008
+total_delay2m<- cbind(total_delay2m,Year)
+
+### combine total_delay12
+total_delay12m<-rbind(total_delay1m,total_delay2m)
+
+### find trend in 2007 and 2008
+library(ggplot2) 
+ggplot() + 
+geom_line(data=total_delay12m,aes(x=Month, y=ArrDelay,colour="ArrDelay"),size=1)+
+geom_point(data=total_delay12m,aes(x=Month,y=ArrDelay,colour="ArrDelay"),size=3)+ 
+geom_line(data=total_delay12m,aes(x=Month, y=DepDelay,colour="DepDelay"),size=1)+
+geom_point(data=total_delay12m,aes(x=Month,y=DepDelay,colour="DepDelay"),size=3)+
+labs(title = "Delay in Months",x="Month",y="Delay")+
+facet_grid(~ Year)
+```
+
+## delays in days of week 
+```{r}
+### remove negative delay
+df12[df12<0]<-NA
+
+### caculate average delay
+ArrDelay_12w<-aggregate(df12$ArrDelay,list(df12$DayOfWeek),mean,na.rm=TRUE)
+DepDelay_12w<-aggregate(df12$DepDelay,list(df12$DayOfWeek),mean,na.rm=TRUE)
+
+### rename column
+ArrDelay_12w<-ArrDelay_12w%>%rename(DayOfWeek = Group.1,ArrDelay = x)
+DepDelay_12w<-DepDelay_12w%>%rename(DayOfWeek = Group.1,DepDelay = x)
+
+### combine ArrDelay and DepDelay
+week_delay<-merge(ArrDelay_12w,DepDelay_12w,by="DayOfWeek",all=FALSE)
+
+### melt week_delay
+library("reshape2")
+week_delay<- melt(week_delay,id.var = 'DayOfWeek')
+
+### plot delay
+library(ggplot2)
+ggplot(week_delay, aes(fill=variable, y=value, x=DayOfWeek)) + 
+    geom_bar(position="dodge", stat="identity")
+```
+
+## delay in days
+```{r}
+### remove negative delay
+df12[df12<0]<-NA
+
+### subset df_day
+df_day<-df12[,c('DepTime','DepDelay','ArrTime','ArrDelay')]
+
+### decide time interval
+df_day$DepTime<- cut(df_day$DepTime,breaks=c(0,200,400,600,800,1000,1200,1400,1600,1800,2000,2200,2400),labels=c("2","4","6","8","10","12","14","16","18","20","22","24"),include.lowest=TRUE,right=FALSE)
+df_day$ArrTime<- cut(df_day$ArrTime,breaks=c(0,200,400,600,800,1000,1200,1400,1600,1800,2000,2200,2400),labels=c("2","4","6","8","10","12","14","16","18","20","22","24"),include.lowest=TRUE,right=FALSE)
+
+### calculate average delay
+avg_depdelay<-df_day%>%
+group_by(DepTime)%>%
+summarise_at(vars(DepDelay),list(mean),na.rm=TRUE)
+avg_arrdelay<-df_day%>%
+group_by(ArrTime)%>%
+summarise_at(vars(ArrDelay),list(mean),na.rm=TRUE)
+
+### merge avg_delay
+avg_delay<- merge(avg_depdelay,avg_arrdelay,by.x = "DepTime",by.y = "ArrTime")
+avg_delay<- avg_delay[c(1,2,3,4,5,7,8,9,11,12),]
+
+### plot line graph
+library(ggplot2) 
+ggplot() + 
+geom_line(data=avg_delay,aes(x=DepTime, y=ArrDelay,colour="ArrDelay"),size=1)+
+geom_point(data=avg_delay,aes(x=DepTime,y=ArrDelay,colour="ArrDelay"),size=3)+ 
+geom_line(data=avg_delay,aes(x=DepTime, y=DepDelay,colour="DepDelay"),size=1)+
+geom_point(data=avg_delay,aes(x=DepTime,y=DepDelay,colour="DepDelay"),size=3)+
+labs(title = "Delay in Day",x="Hours",y="Delay")
+```
+
+## question two
+## use graph 
+```{r}
+### prepare plane df
+plane<-plane[,c(1,4)]
+plane<-plane%>%
+rename(TailNum = tailnum)
+
+### prepare delay df
+df12<-df12%>%filter(df12$Diverted!=0)
+df12$total_delay<-apply(df12[,c(15,16)],1,sum,na.rm=TRUE)
+delay<-df12[,c(11,30)]%>%
+group_by(TailNum)%>%
+summarise_at(vars(total_delay),list(mean),rm.na=TRUE)
+
+### merge by tail number
+plane_delay<-merge(plane,delay,by="TailNum")
+
+### transfer datatype to date
+plane_delay$issue_date<-as.Date(plane_delay$issue_date,'%m/%d/%Y')
+summary(plane_delay)
+
+### scatter plot
+library(ggplot2)
+ggplot(plane_delay,aes(x=issue_date,y=total_delay))+
+geom_point()
+```
+
+## use two samples t-test 
+## test variance with f-test
+```{r}
+### mutate new classification column 
+plane_delay <- plane_delay %>% mutate(f_test= if_else(issue_date<'2001-10-09', "old", "new"))
+
+### remove na
+library(tidyr)
+plane_delay<- plane_delay%>%drop_na()
+
+### split into new and old df and make vectors
+new <- plane_delay[plane_delay$f_test == 'new', ]
+old <- plane_delay[plane_delay$f_test == 'old', ]
+vector_new <- new$total_delay
+vector_old <- old$total_delay
+
+var.test(vector_new,vector_old)
+```
+
+## t-test
+```{r}
+t.test(vector_old,vector_new,alternative="greater",var.equal=TRUE)
+```
+
+## question three
+## flights change over time
+### assign two airports
+```{r}
+A<-function(airport){tryCatch(
+  filter(df12,Origin==airport)
+  ,error = function(e)
+ print("please type correct airport code"))
+}
+
+B<-function(airport){tryCatch(
+  filter(df12,Dest==airport)
+  ,error = function(e)
+ print("please type correct airport code"))
+}
+df12<-A("ATL")
+df12<-B("DFW")
+```
+
+### months
+```{r}
+### df of monthly flights
+month<-df12%>%count(Year,Month)
+
+### plot chart
+library(ggplot2) 
+ggplot() + 
+geom_line(data=month,aes(x=Month, y=n),size=1)+
+geom_point(data=month,aes(x=Month,y=n),size=3)+ 
+labs(title = "Flights in Months",x="Month",y="Number of Flights")+
+facet_grid(~ Year)
+```
+
+### week
+```{r}
+### df of flights in week
+week<-df12%>%count(DayOfWeek)
+
+### plot chart
+ggplot() + 
+geom_line(data=week,aes(x=DayOfWeek, y=n),size=1)+
+geom_point(data=week,aes(x=DayOfWeek,y=n),size=3)+ 
+labs(title = "Flights in Day of Week",x="Day of Week",y="Number of Flights")
+```
+
+### day
+```{r}
+### decide time interval
+df12$Time<- df12$CRSDepTime/100
+df12$Time<-floor(df12$Time)
+
+### df of flights in week
+day<-df12%>%count(Time)
+
+### plot chart
+ggplot() + 
+geom_line(data=day,aes(x=Time, y=n),size=1)+
+geom_point(data=day,aes(x=Time,y=n),size=3)+ 
+labs(title = "Flights in Day",x="Hours",y="Number of Flights")
+```
+
+## people movement between airports
+### assign time period to df
+```{r}
+### assign year
+year<-2007
+if(year==2007 |year==2008){
+  year<-year}else{print("please assign year from 2007 to 2008")
+    stop()}
+
+### assign month
+month<-9
+if(month>=1 & month<=12){
+  month<-month}else{print("please assign month from 1 to 12")
+    stop()}
+
+### assign day
+day<-0
+if(day>=0 &day<=31){
+  day<-day}else{print("please assign day from 0 to 31")
+    stop()}
+```
+
+### prepare  df 
+```{r}
+### select data from assigned time frame 
+df12<-rbind(firsty,secondy)
+assign_time<-df12%>%filter(Year==year)%>%filter(Month==month)%>%filter(if(day%in%DayofMonth)DayofMonth==day else DayofMonth>0)
+
+### create flight and count column
+flights<-assign_time%>%mutate(flight=paste(Origin,Dest))%>%group_by(flight)%>%mutate(count=n())
+
+### remove duplicate flight and sort flight
+flights<-flights[!duplicated(flights$flight), ]
+
+### extract important flights
+flights<-flights%>%arrange(desc(count))
+flights<-flights[1:20,]
+
+### merge assign_time with airport_code
+flights<-flights%>%select(Origin,Dest)%>% merge( airport_code, by.x = "Origin", by.y = "iata")%>%merge(airport_code, by.x = "Dest", by.y = "iata")%>% select(Origin,Dest,lat.x,long.x,lat.y,long.y)
+```
+
+### plot map
+```{r}
+library(ggplot2)
+library(ggrepel)
+usMap <- borders("state", colour="grey", fill="white")
+title<-paste("Flights on ",month,"/",day,",",year)
+allUSA <- ggplot() + usMap +
+  geom_curve(data=flights,
+             aes(x=long.x, y=lat.x, xend=long.y, yend=lat.y),
+             col="#b29e7d",
+             size=.7,
+             curvature=0.2) +
+  theme(axis.line=element_blank(),
+        axis.text.x=element_blank(),
+        axis.text.y=element_blank(),
+        axis.title.x=element_blank(),
+        axis.title.y=element_blank(),
+        axis.ticks=element_blank(),
+        plot.title=element_text(hjust=0.5, size=12)) +
+  ggtitle(title)
+
+allUSA
+```
+
+## question four
+### copy df12
+dforigin<-rbind(firsty,secondy)
+
+### assign airport A with ""
+```{r}
+A<-function(airport){tryCatch(
+  filter(df12,Origin==airport)
+  ,error = function(e)
+ print("please type correct airport code"))
+}
+df12<-A("ATL")
+```
+
+## type one
+```{r}
+### depdelay in A and arrdelay in Bs from A
+t1<-df12%>%group_by(Dest)%>%summarise(depdelay=mean(DepDelay,na.rm=TRUE),arrdelay_in_B=mean(ArrDelay,na.rm=TRUE))
+
+### test correlation of depdelay and arrdelay_in_B in t1
+cor(t1$depdelay, t1$arrdelay_in_B, method = "pearson")
+cor.test(t1$depdelay, t1$arrdelay_in_B, method = "pearson")
+```
+
+## type two
+```{r}
+### depdelay in A to Bs 
+t2<-df12%>%group_by(Dest)%>%summarize(depdelay=mean(DepDelay,na.rm=TRUE))
+
+### depdelay in Bs to Cs
+get_depdelay<-function(x){
+ predf<-filter(dforigin,Origin==x)
+  mean(predf$DepDelay,na.rm = TRUE)}
+
+depdelay_in_B<-sapply(X=t2$Dest,FUN = get_depdelay)
+t2$depdelay_in_B<-depdelay_in_B
+
+### test correlation of depdelay and arrdelay_in_B in t1
+cor(t2$depdelay, t2$depdelay_in_B, method = "pearson")
+cor.test(t2$depdelay, t2$depdelay_in_B, method = "pearson")
+```
+
+## type three
+```{r}
+### arrdelay in Bs from A
+t3<-df12%>%group_by(Dest)%>%summarize(arrdelay_in_B=mean(ArrDelay,na.rm=TRUE))
+
+### arrdelay in Cs from Bs
+get_arrdelay<-function(x){
+ predf<-filter(dforigin,Origin==x)
+  mean(predf$ArrDelay,na.rm = TRUE)}
+
+arrdelay_in_C<-sapply(X=t3$Dest,FUN = get_arrdelay)
+t3$arrdelay_in_C<-arrdelay_in_C
+
+### test correlation of arrdelay_in_B and arrdelay_in_C in t3
+cor(t3$arrdelay_in_B, t3$arrdelay_in_C, method = "pearson")
+cor.test(t3$arrdelay_in_B, t3$arrdelay_in_C, method = "pearson")
+```
+
+## type four
+```{r}
+### arrdelay in Bs from A
+t4<-df12%>%group_by(Dest)%>%summarize(arrdelay_in_B=mean(ArrDelay,na.rm=TRUE))
+
+### depdelay in Cs to Ds
+depdelay_in_C<-sapply(X=t4$Dest,FUN = get_depdelay)
+t4$depdelay_in_C<-depdelay_in_C
+
+### test correlation of arrdelay_in_B and depdelay_in_C in t4
+cor(t4$arrdelay_in_B, t4$depdelay_in_C, method = "pearson")
+cor.test(t4$arrdelay_in_B, t4$depdelay_in_C, method = "pearson")
+```
+
+## question five
+## prepare data
+```{r}
+### dummy for airport
+x<-df12$Origin%>%unique()
+df12$Origin = factor(df12$Origin,levels =x) 
+y<-df12$Dest%>%unique()
+df12$Dest = factor(df12$Dest,levels =y) 
+
+### dummy for carrier
+z<-df12$UniqueCarrier%>%unique()
+df12$UniqueCarrier = factor(df12$UniqueCarrier,levels =z)
+
+### remove irrelevant column and na
+library(tidyr)
+df12<-df12%>%select(-TailNum,-Diverted,-Cancelled,-CancellationCode,-TaxiIn,-TaxiOut)
+df12<-drop_na(df12)
+
+### df for depdelay
+df_D<-df12%>%select(-ArrDelay)
+
+### df for arrdelay
+df_A<-df12%>%select(-DepDelay)
+```
+
+## depdelay
+## traing and test model
+```{r}
+### sampling
+df_D<-df_D[sample(nrow(df_D),10000),]
+library(caTools)
+set.seed(123)
+split = sample.split(df_D$DepDelay, SplitRatio = 0.8)
+
+training_set = subset(df_D, split == TRUE)
+test_set = subset(df_D, split == FALSE)
+
+regressor_D = lm(formula = DepDelay ~ .,data = training_set)
+summary(regressor_D)
+
+### Predicting the test set results
+test_set<-test_set%>%filter(Origin%in%training_set$Origin)%>%filter(Dest%in%training_set$Dest)
+y_pred = predict(regressor_D, newdata = test_set)
+```
+
+## model accuracy 
+```{r}
+### plot pred_train and depdelay
+training_set<-training_set%>%mutate(pred_train=predict(regressor_D))
+plot(training_set$DepDelay,training_set$pred_train)
+plot(test_set$DepDelay,y_pred)
+
+### the accuracy of training_set (RMSE)
+training_set<-training_set%>%mutate(error=pred_train-DepDelay,sq.error=error^2)
+mse_train<-mean(training_set$sq.error)%>%sqrt() #6.99967101
+
+### the accuracy of test_set (RMSE)
+mse_test<-sqrt(mean((y_pred-test_set$DepDelay)^2))     #7.295295
+```
+
+## arrdelay
+## traing and test model
+```{r}
+df_A<-df_A[sample(nrow(df_A),10000),]
+library(caTools)
+set.seed(123)
+split = sample.split(df_A$ArrDelay, SplitRatio = 0.8)
+
+training_set = subset(df_A, split == TRUE)
+test_set = subset(df_A, split == FALSE)
+
+regressor_A = lm(formula = ArrDelay ~ .,data = training_set)
+summary(regressor_A) 
+
+### Predicting the test set results
+test_set<-test_set%>%filter(Origin%in%training_set$Origin)%>%filter(Dest%in%training_set$Dest)
+y_pred = predict(regressor_A, newdata = test_set)
+```
+
+## model accuracy 
+```{r}
+### plot pred_train and depdelay
+training_set<-training_set%>%mutate(pred_train=predict(regressor_A))
+plot(training_set$ArrDelay,training_set$pred_train)
+plot(test_set$ArrDelay,y_pred)
+
+### the accuracy of training_set (RMSE)
+training_set<-training_set%>%mutate(error=pred_train-ArrDelay,sq.error=error^2)
+mse_train<-mean(training_set$sq.error)%>%sqrt() #6.971924564
+
+### the accuracy of test_set (RMSE)
+mse_test<-sqrt(mean((y_pred-test_set$ArrDelay)^2))     #7.465989403
+```
+
+
+
